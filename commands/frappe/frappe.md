@@ -1,50 +1,54 @@
-# /frappe — Frappe Development Master Dispatcher
+# Frappe Master Dispatcher
+Route any Frappe/ERPNext task to the correct specialist command and execute it.
 
-## Purpose
-You are a Frappe Framework and ERPNext expert. When invoked, load full
-Frappe context and handle the task described in $ARGUMENTS intelligently.
+## Step 1: Load Project Context
+Read these files before anything else:
+| File | Purpose |
+|------|---------|
+| `CLAUDE.md` (project root) | App name, site name, conventions |
+| `hooks.py` | Current event bindings, scheduled tasks |
+| `apps/<app>/modules.txt` | Module list |
 
-## Context to Load First
-Before doing anything:
-1. Read `CLAUDE.md` in the project root
-2. Read `hooks.py` to understand current bindings
-3. Read the relevant DocType folder if a specific DocType is mentioned
-4. Reference `~/.claude/skills/frappe-patterns/SKILL.md` for patterns
+## Step 2: Classify the Task from $ARGUMENTS
+| Keyword in $ARGUMENTS | Execute Command |
+|----------------------|-----------------|
+| `new doctype` / `create doctype` / `scaffold` | `/frappe-new` |
+| `api` / `endpoint` / `whitelist` | `/frappe-api` |
+| `hook` / `doc_event` / `scheduled` / `cron` | `/frappe-hook` |
+| `background` / `bg` / `enqueue` / `async` | `/frappe-bg` |
+| `fix` / `error` / `traceback` / `exception` | `/frappe-fix` |
+| `review` / `audit` / `check` | `/frappe-review` |
+| `patch` / `migration` / `migrate data` | `/frappe-patch` |
+| `fixture` / `export` / `import config` | `/frappe-fixture` |
+| `test` / `unittest` / `spec` | `/frappe-test` |
+| `integrate` / `integration` / `third-party` | `/frappe-integrate` |
+| `report` / `query report` / `script report` | `/frappe-report` |
+| `slow` / `performance` / `optimize` / `n+1` | `/frappe-perf` |
+| `permission` / `role` / `access` | `/frappe-permission` |
+| `notify` / `email` / `alert` / `whatsapp` | `/frappe-notify` |
+| `vue` / `frappe-ui` / `component` | `/frappe-vue` |
+| `page` / `www` / `portal` / `jinja` | `/frappe-page` |
+| `deploy` / `production` / `release` | `/frappe-deploy` |
+| `print format` / `pdf` / `letter head` | `/frappe-print` |
+| `dashboard` / `chart` / `kpi` / `number card` | `/frappe-dashboard` |
+| `bench migrate` / `schema` / `upgrade` | `/frappe-migrate` |
+| `import data` / `bulk import` / `csv` | `/frappe-import` |
+| `workflow` / `approval` / `state machine` | `/frappe-workflow` |
+| `client script` / `form script` / `desk js` | `/frappe-script` |
 
-## Task Routing by $ARGUMENTS keyword
+## Step 3: Execute
+Run the matched command with the full $ARGUMENTS passed through.
 
-| Keyword in $ARGUMENTS     | Route to                        |
-|---------------------------|---------------------------------|
-| new doctype / create doctype | /frappe-new                  |
-| api / endpoint / whitelist   | /frappe-api                  |
-| hook / doc_event / scheduled | /frappe-hook                 |
-| bg / background / enqueue    | /frappe-bg                   |
-| fix / error / traceback      | /frappe-fix                  |
-| review / audit               | /frappe-review               |
-| patch / migration            | /frappe-patch                |
-| fixture / export             | /frappe-fixture              |
-| test / unittest              | /frappe-test                 |
-| page / www                   | /frappe-page                 |
-| vue / frappe-ui / component  | /frappe-vue                  |
-| integrate / integration      | /frappe-integrate            |
-| report / query report        | /frappe-report               |
-| permission / role            | /frappe-permission           |
-| print format / pdf           | /frappe-print                |
-| dashboard / chart            | /frappe-dashboard            |
-| notification / alert / email | /frappe-notify               |
-| deploy / production          | /frappe-deploy               |
-| optimize / performance       | /frappe-perf                 |
+## Step 4: Guardrails
+Stop and ask ONE clarifying question if:
+- $ARGUMENTS is empty or fewer than 3 words
+- The task spans more than 2 command categories (split into separate tasks)
+- The task requires modifying `frappe/` or `erpnext/` source directly → explain the correct override approach instead
 
-If $ARGUMENTS is empty or unclear → ask ONE clarifying question.
-
-## Mandatory Rules (Always Follow)
-- NEVER modify `frappe/` or `erpnext/` source directly
-- NEVER use string interpolation in SQL — always parametrized
-- NEVER call `frappe.db.commit()` inside validate() or lifecycle hooks
-- NEVER block HTTP requests with heavy processing — always enqueue()
-- NEVER hardcode site name — use `frappe.local.site`
-- NEVER expose passwords in code — use Password field type in Settings DocType
+## Mandatory Rules (apply to all commands)
+- NEVER modify `frappe/` or `erpnext/` core source
+- NEVER use string interpolation in SQL — always parametrized queries
+- NEVER call `frappe.db.commit()` inside `validate()` or lifecycle hooks
+- NEVER block HTTP requests with heavy processing — always `enqueue()`
 - ALWAYS call `frappe.has_permission()` in whitelisted APIs
-- ALWAYS wrap user-facing strings in `_()` for translation
-- ALWAYS write tests alongside new code
-- ALWAYS export fixtures after UI config changes
+- ALWAYS wrap user-facing strings in `_()`

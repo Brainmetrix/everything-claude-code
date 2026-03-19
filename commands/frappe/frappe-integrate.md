@@ -1,84 +1,108 @@
-# /frappe-integrate — Scaffold a Third-Party Integration
+# Frappe Integration
+Scaffold a complete third-party integration: Settings DocType, adapter class, webhook, background sync, tests.
 
-## Purpose
-Create a complete, production-ready third-party integration following
-Frappe integration patterns: Settings DocType, adapter class, webhook
-handler, background sync, and test coverage.
+## Step 1: Parse $ARGUMENTS
+Extract:
+- Service name (e.g. Razorpay, Shopify, Shiprocket)
+- Direction: inbound (webhook), outbound (API call), or both
+- Primary action (payment, sync orders, shipping labels, notifications)
 
-## Input
-$ARGUMENTS = name of service and what it needs to do
+## Step 2: Read Existing Structure
+1. Check `apps/<app>/<app>/integrations/` for existing integrations (follow same pattern)
+2. Read `CLAUDE.md` for app name and conventions
 
-## Always Generate These Components
-
-### 1. Settings DocType (`<Service>Settings`)
-```python
-# A Single DocType to store credentials securely
-Fields required:
-- api_key (Data, reqd)
-- api_secret (Password, reqd)  ← Password type = encrypted at rest
-- base_url (Data, default=https://api.service.com/v1)
-- is_enabled (Check)
-- test_mode (Check)
-- last_sync (Datetime, read_only)
-# Always add a "Test Connection" button in the .js file
+## Step 3: Generate Settings DocType
+Create `<ServiceName> Settings` as a Single DocType with:
 ```
+Fields required:
+- api_key       (Data, reqd, label: API Key)
+- api_secret    (Password, reqd, label: API Secret)  ← Password = encrypted
+- base_url      (Data, default: https://api.<service>.com/v1)
+- is_enabled    (Check, label: Enable Integration)
+- test_mode     (Check, label: Sandbox / Test Mode)
+- last_sync_on  (Datetime, read_only)
+```
+Client script must include a "Test Connection" button in `refresh()`.
 
-### 2. Integration Adapter Class
+## Step 4: Generate Adapter Class
+File: `apps/<app>/<app>/integrations/<service_snake>.py`
 ```python
-# integrations/<service_snake>.py
+import frappe, hmac, hashlib, requests
+from frappe import _
+
 class <Service>Integration:
     def __init__(self):
         self.settings = frappe.get_cached_doc("<Service> Settings")
         if not self.settings.is_enabled:
-            frappe.throw(_("<Service> integration is not enabled"))
+            frappe.throw(_("<Service> integration is disabled"))
         self.api_key = self.settings.api_key
-        self.secret = self.settings.get_password("api_secret")
+        self.secret  = self.settings.get_password("api_secret")
         self.base_url = self.settings.base_url
-        self.session = self._build_session()
+        self._session = None
 
-    def _build_session(self):
-        """Reusable requests session with auth headers."""
+    def _get_session(self):
+        if not self._session:
+            s = requests.Session()
+            s.headers.update({"Authorization": f"Bearer {self.api_key}",
+                              "Content-Type": "application/json"})
+            self._session = s
+        return self._session
 
     def _request(self, method, endpoint, **kwargs):
-        """Central request method with logging, retry, error handling."""
-        # Log outgoing request
-        # Handle rate limits with exponential backoff
-        # Raise meaningful frappe errors on failure
+        """Central request with logging + error handling."""
+        url = f"{self.base_url}/{endpoint}"
+        frappe.logger().debug(f"<Service> {method} {url}")
+        resp = self._get_session().request(method, url, timeout=30, **kwargs)
+        if not resp.ok:
+            frappe.log_error(resp.text, f"<Service> API Error: {resp.status_code}")
+            frappe.throw(_("<Service> API error: {0}").format(resp.status_code))
+        return resp.json()
+
+    def verify_signature(self, payload_bytes, signature, secret=None):
+        """HMAC-SHA256 signature verification."""
+        expected = hmac.new(
+            (secret or self.secret).encode(),
+            payload_bytes,
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            frappe.throw(_("Invalid <Service> webhook signature"), frappe.PermissionError)
 ```
 
-### 3. Webhook Handler
+## Step 5: Generate Webhook Handler
 ```python
 @frappe.whitelist(allow_guest=True)
 def webhook():
+    payload_bytes = frappe.request.data
+    signature = frappe.request.headers.get("<X-Signature-Header>", "")
+    <Service>Integration().verify_signature(payload_bytes, signature)
     payload = frappe.request.get_json()
-    _verify_signature(frappe.request.headers, payload)
-    enqueue("myapp.integrations.<service>.process_webhook",
+    enqueue("<app>.integrations.<service_snake>.process_webhook",
             queue="default", payload=payload)
     return {"status": "received"}
 ```
 
-### 4. Background Sync Task
-- Enqueued, not blocking
-- Idempotent (safe to re-run)
-- Logs all activity
-- frappe.db.commit() after each batch
+## Step 6: Checklist Output
+After generating all files, print this checklist:
+```
+Integration Setup Checklist:
+[ ] Settings DocType migrated: bench --site <site> migrate
+[ ] Test Connection button works in Settings form
+[ ] Webhook URL registered in <Service> dashboard: https://<site>/api/method/<app>.integrations.<service>.webhook
+[ ] Fixtures exported: bench --site <site> export-fixtures --app <app>
+[ ] Unit tests written with mocked HTTP responses
+[ ] api_secret stored via Password field (never plaintext)
+```
 
-### 5. Integration Checklist in Output
-- [ ] Settings DocType with encrypted credentials
-- [ ] Test Connection button in Settings form
-- [ ] All outgoing requests logged
-- [ ] Rate limits handled with exponential backoff
-- [ ] Unit tests with mocked HTTP calls (responses library)
-- [ ] Webhook handler with signature verification
-- [ ] Background sync with deduplication job_id
+## Step 7: Guardrails
+Stop and ask if:
+- No signature verification is possible for the service → document why and add IP allowlist comment
+- Service uses OAuth → OAuth flow is out of scope for this command, ask user to handle separately
 
 ## Examples
 ```
-/frappe-integrate Razorpay for payment collection and reconciliation
-/frappe-integrate Shiprocket for shipping label generation and tracking
-/frappe-integrate Shopify for product and order sync bidirectional
-/frappe-integrate Tally for GL entry export in XML format
+/frappe-integrate Razorpay payment collection and reconciliation
+/frappe-integrate Shiprocket shipping label generation and tracking updates
+/frappe-integrate Shopify bidirectional product and order sync
 /frappe-integrate WhatsApp Business API for invoice and order notifications
-/frappe-integrate Google Sheets for live report export
-/frappe-integrate Zoho CRM for lead and contact sync
 ```

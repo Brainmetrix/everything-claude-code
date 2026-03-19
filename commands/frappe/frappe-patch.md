@@ -1,61 +1,96 @@
-# /frappe-patch — Create a Data Migration Patch
+# Frappe Patch
+Create a safe, idempotent data migration patch.
 
-## Purpose
-Create a safe, idempotent Frappe data migration patch for schema changes,
-data transformations, or one-time setup tasks.
+## Step 1: Parse $ARGUMENTS
+Extract:
+- What data needs to change (rename, set default, transform values)
+- Which DocType / table is affected
+- Target version for the patch path (check existing `patches/` for latest version)
 
-## Input
-$ARGUMENTS = description of what data needs to be migrated or changed
+Read `apps/<app>/patches.txt` and `apps/<app>/<app>/patches/` to determine the correct version folder.
 
-## Rules for Every Patch
+## Step 2: Determine Patch Type
+| Type | Indicator | Guard Pattern |
+|------|-----------|---------------|
+| Rename field | "rename field X to Y" | `frappe.db.has_column()` |
+| Set default value | "set default", "populate empty" | Check column exists + filter on NULL |
+| Transform values | "migrate", "convert", "replace value" | Check old values exist before changing |
+| Add index | "add index", "slow query on field X" | `frappe.db.has_index()` |
+| One-time setup | "create default records", "initial data" | `frappe.db.exists()` |
 
-1. **Always idempotent** — safe to run multiple times without side effects
-2. **Check before modifying** — verify column/field/record exists first
-3. **Explicit commit** — always frappe.db.commit() at the end
-4. **Never delete data** — archive or flag instead of hard delete
-5. **Log progress** — use frappe.logger() for long-running patches
-6. **Test on staging** — always include test instructions
+## Step 3: Generate Patch File
+Path: `apps/<app>/<app>/patches/v<major>_<minor>/<descriptive_name>.py`
 
-## Patch Template
 ```python
-# patches/v<major>_<minor>/<descriptive_name>.py
+# <app>/patches/v<X>_<Y>/<descriptive_name>.py
 import frappe
+
 
 def execute():
     """
-    One-line description of what this patch does.
-    Ticket/PR: #<number>
+    <One-sentence description of what this patch does>.
+    Safe to run multiple times (idempotent).
     """
-    # Guard: check if already applied or preconditions not met
-    if not frappe.db.has_column("DocType", "field_name"):
-        return  # column doesn't exist, nothing to do
-    
-    # Guard: check if already migrated
-    if not frappe.db.exists("DocType", {"field": "old_value"}):
+    # Guard 1: check precondition exists
+    if not frappe.db.has_column("<DocType>", "<field>"):
+        return  # nothing to do
+
+    # Guard 2: check work is not already done
+    if not frappe.db.exists("<DocType>", {"<old_field_value>": "<old_value>"}):
         return  # already migrated
-    
-    # Do the work
+
+    # Do the work with parametrized SQL
     frappe.db.sql("""
-        UPDATE `tabDocType`
-        SET new_field = old_field
-        WHERE new_field IS NULL OR new_field = ''
-    """)
-    
+        UPDATE `tab<DocType>`
+        SET `<target_field>` = %(new_value)s
+        WHERE `<condition_field>` = %(condition_value)s
+          AND (`<target_field>` IS NULL OR `<target_field>` = '')
+    """, {
+        "new_value": "<value>",
+        "condition_value": "<value>",
+    })
+
     frappe.db.commit()
 ```
 
-## Output
-1. Patch file at correct path: `myapp/patches/v<x>_<y>/<name>.py`
-2. Line to add in `patches.txt`: `myapp.patches.v<x>_<y>.<name>`
-3. Test command: `bench --site <site> run-patch myapp.patches.v<x>_<y>.<name>`
-4. Rollback plan (how to undo if needed)
+## Step 4: Register in patches.txt
+Add ONE line at the end of `apps/<app>/patches.txt`:
+```
+<app>.patches.v<X>_<Y>.<descriptive_name>
+```
+
+## Step 5: Provide Test Commands
+```bash
+# Test on staging first — ALWAYS
+bench --site <staging_site> run-patch <app>.patches.v<X>_<Y>.<descriptive_name>
+
+# Verify result
+bench --site <staging_site> console
+>>> frappe.db.sql("SELECT COUNT(*) FROM `tab<DocType>` WHERE <verify_condition>")
+
+# Run on production only after staging passes
+bench --site <prod_site> run-patch <app>.patches.v<X>_<Y>.<descriptive_name>
+```
+
+## Step 6: Guardrails
+Stop and ask if:
+- The patch deletes data → never delete, archive or flag instead; ask for confirmation
+- No guard clause would be idempotent → redesign the guard before proceeding
+- The patch modifies ERPNext core tables (`tabSales Order`, `tabCustomer`, etc.) → confirm this is intentional and safe
+- Patch touches > 10,000 rows → recommend batching with commit every 500 rows
+
+## Patch Rules (always apply)
+- Every patch MUST have at least one guard clause (return early if already done)
+- Never use string interpolation in SQL — always use `%(key)s` with dict
+- Always `frappe.db.commit()` at the end
+- Never `frappe.get_doc()` in a loop — use `frappe.db.sql()` for bulk updates
+- Never delete rows — set a `disabled` or `archived` flag instead
 
 ## Examples
 ```
 /frappe-patch rename field customer_code to customer_ref in Customer doctype
-/frappe-patch set default status to Active for all existing Supplier records
-/frappe-patch migrate payment_method values: Cash->CASH, Card->CARD, UPI->UPI
-/frappe-patch populate full_name field from first_name + last_name in Employee
-/frappe-patch remove duplicate Address records keeping the most recent one
-/frappe-patch add missing naming_series to 500 legacy Invoice records
+/frappe-patch set default status to Active for all existing Supplier records where status is blank
+/frappe-patch migrate payment_method values: Cash to CASH, Card to CARD
+/frappe-patch add database index on customer field in tabSales Order for performance
+/frappe-patch populate full_name from first_name + last_name in Employee
 ```

@@ -1,65 +1,86 @@
-# /frappe-review — Deep Frappe-Aware Code Review
+# Frappe Code Review
+Review Frappe/ERPNext code for security, performance, and convention issues.
 
-## Purpose
-Review Frappe/ERPNext code for security, performance, convention violations,
-and correctness. Deeper than generic /code-review because it knows
-Frappe-specific anti-patterns.
+## Step 1: Identify Target from $ARGUMENTS
+| Input | Action |
+|-------|--------|
+| File path given | Read that file directly |
+| DocType name given | Read `doctype/<name>/` folder (all 4 files) |
+| Module name given | Read all `.py` files in that module |
+| `recent` or no path | Run `git diff HEAD~1 --name-only`, read changed files |
+| `all` or app name | Read `api/`, `handlers/`, `integrations/` folders |
 
-## Input
-$ARGUMENTS = file path, module, DocType name, or "recent" for git diff
+Read the target files before running any checklist.
 
-## Review Checklist
+## Step 2: Security Scan (run first — blocks deployment)
+For each file read, check every item:
 
-### 🔴 Critical — Security / Data Loss (BLOCK deployment)
-- [ ] SQL string interpolation anywhere → must be parametrized
-- [ ] @frappe.whitelist() APIs missing frappe.has_permission()
-- [ ] allow_guest=True without signature/token validation
-- [ ] Passwords or secrets hardcoded in source
-- [ ] frappe.db.commit() inside validate() or lifecycle hooks
-- [ ] Missing rollback in exception handlers that modify DB
-- [ ] File uploads without type/size validation
-- [ ] XSS risk: user input rendered in Jinja without escape_html()
+| Check | Pattern to Find | Severity |
+|-------|----------------|----------|
+| SQL injection | `f"SELECT"` or `%s` with variable | 🔴 CRITICAL |
+| Missing permission check | `@frappe.whitelist()` without `frappe.has_permission()` | 🔴 CRITICAL |
+| Unvalidated guest endpoint | `allow_guest=True` without signature check | 🔴 CRITICAL |
+| Hardcoded secret | `api_key =`, `password =`, `secret =` literals | 🔴 CRITICAL |
+| Commit in validate | `frappe.db.commit()` inside `validate()` | 🔴 CRITICAL |
+| XSS in template | User input rendered without `escape_html()` | 🔴 CRITICAL |
+| Missing rollback in test | `tearDown` without `frappe.db.rollback()` | 🟡 HIGH |
 
-### 🟡 Performance — Fix This Sprint
-- [ ] frappe.get_doc() inside a loop (N+1 query)
-- [ ] frappe.get_list() without page_length limit
-- [ ] Heavy sync work in HTTP request (should be enqueued)
-- [ ] frappe.get_doc() for Settings/Single DocType (use get_cached_doc)
-- [ ] Unindexed fields used as filters in large tables
-- [ ] frappe.db.sql() used where ORM would work fine
+## Step 3: Performance Scan
+| Check | Pattern to Find | Severity |
+|-------|----------------|----------|
+| N+1 query | `frappe.get_doc()` inside a loop | 🟡 HIGH |
+| Unbounded list | `frappe.get_list()` without `page_length` | 🟡 HIGH |
+| Blocking HTTP | Heavy logic in `@frappe.whitelist()` without `enqueue()` | 🟡 HIGH |
+| Uncached settings | `frappe.get_doc("Settings")` repeatedly | 🟠 MEDIUM |
+| Unindexed filter | Filtering on high-cardinality field with no index | 🟠 MEDIUM |
+| Raw SQL over ORM | `frappe.db.sql()` where `frappe.get_list()` would work | 🟠 MEDIUM |
 
-### 🟠 Convention Violations — Fix This Sprint
-- [ ] Modifying ERPNext/Frappe source directly
-- [ ] User-facing strings not wrapped in _()
-- [ ] raise Exception() instead of frappe.throw()
-- [ ] Hardcoded site name instead of frappe.local.site
-- [ ] Missing frappe.set_user() in background job function
-- [ ] Patches that are not idempotent
-- [ ] Fixtures not committed after Custom Field changes
-- [ ] Missing frappe.db.rollback() in test tearDown()
+## Step 4: Convention Scan
+| Check | Pattern to Find | Severity |
+|-------|----------------|----------|
+| Direct core edit | Import from or edit of `frappe/` or `erpnext/` | 🔴 CRITICAL |
+| Untranslated string | User-facing string without `_()` wrapper | 🟠 MEDIUM |
+| Bare raise | `raise Exception(` instead of `frappe.throw(` | 🟠 MEDIUM |
+| Hardcoded site | `"mysite.localhost"` instead of `frappe.local.site` | 🟠 MEDIUM |
+| Missing set_user | Background task without `frappe.set_user()` | 🟡 HIGH |
+| Non-idempotent patch | Patch without existence/column check guard | 🟡 HIGH |
+| Uncommitted fixtures | Custom Field changes not in `fixtures/` | 🟠 MEDIUM |
 
-### 🔵 Suggestions — Nice to Have
-- [ ] Missing type hints on Python functions
-- [ ] Missing docstrings on public API methods
-- [ ] No tests for new controller logic
-- [ ] Duplicate logic that could be extracted to utils/
+## Step 5: Output Format
+For each finding output exactly:
+```
+🔴 CRITICAL | <file>:<line> | <problem in one sentence>
+Fix: <code snippet or command>
 
-## Output Format
-Group by severity. For each finding:
-- **File + line number**
-- **Problem** (one sentence)
-- **Fix** (code snippet if needed)
+🟡 HIGH | <file>:<line> | <problem>
+Fix: <code snippet>
 
-End with summary: `PASS / NEEDS WORK / BLOCKED`
-- PASS = no red/yellow issues
-- NEEDS WORK = yellow/orange only
-- BLOCKED = any red issue found
+🟠 MEDIUM | <file>:<line> | <problem>
+Fix: <suggestion>
+```
+
+## Step 6: Summary Score
+```
+Files reviewed: N
+Critical issues: X  ← any = BLOCKED
+High issues:    X  ← any = NEEDS WORK
+Medium issues:  X  ← PASS with notes
+
+Verdict: PASS | NEEDS WORK | BLOCKED
+```
+- **BLOCKED** → any 🔴 CRITICAL found — do not deploy
+- **NEEDS WORK** → only 🟡 HIGH — fix before next sprint
+- **PASS** → only 🟠 MEDIUM or lower — safe to merge
+
+## Step 7: Guardrails
+Stop and ask if:
+- More than 10 critical issues found → likely a systemic problem, ask if full security audit is needed
+- File is a core Frappe/ERPNext file → do not review, explain they should not be modifying it
 
 ## Examples
 ```
 /frappe-review integrations/razorpay.py
 /frappe-review api/customer_portal.py
+/frappe-review recent
 /frappe-review handlers/sales_order.py
-/frappe-review recent        (reviews files changed in last git commit)
-/frappe-review myapp/        (reviews entire app)
 ```

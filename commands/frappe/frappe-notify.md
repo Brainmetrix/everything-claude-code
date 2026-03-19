@@ -1,88 +1,74 @@
-# /frappe-notify — Set Up Notifications, Emails, and Alerts
+# Frappe Notify
+Set up email notifications, desk alerts, or WhatsApp/SMS messages for DocType events.
 
-## Purpose
-Create email notifications, system alerts, WhatsApp/SMS triggers,
-and real-time desk notifications for Frappe DocType events.
+## Step 1: Classify from $ARGUMENTS
+| Type | Indicator | Implementation |
+|------|-----------|---------------|
+| Frappe Notification DocType | "when X happens notify Y" | No-code: create Notification record |
+| Programmatic email | "send email on submit" | `frappe.sendmail()` in handler |
+| Desk alert | "show alert", "bell icon" | `frappe.publish_realtime()` |
+| Bulk/scheduled email | "daily digest", "weekly summary" | Background task + `frappe.sendmail()` |
+| WhatsApp/SMS | "whatsapp", "sms" | Background job via integration |
 
-## Input
-$ARGUMENTS = what event should trigger what notification to whom
+## Step 2: Generate Implementation
 
-## Notification Types
-
-### 1. Frappe Email Notification (DocType-based, no code)
+**Frappe Notification (fixture JSON):**
+```json
+{
+    "doctype": "Notification",
+    "name": "<DocType> <Event> Alert",
+    "document_type": "<DocType>",
+    "event": "Submit",
+    "subject": "{{ doc.name }} has been submitted",
+    "recipients": [{"receiver_by_document_field": "contact_email"}],
+    "message": "<p>Dear {{ doc.contact_person }},<br>{{ doc.name }} submitted.</p>",
+    "enabled": 1
+}
 ```
-Go to: Notification → New
-- Subject: Invoice {{doc.name}} is overdue
-- Event: Days After (based on due_date)
-- Days: 1
-- Recipients: doc.contact_email, accounts@company.com
-- Message: Jinja template with doc fields
-```
 
-### 2. Programmatic Email (from controller/hook)
+**Programmatic email in handler:**
 ```python
-# In handler or background job
-frappe.sendmail(
-    recipients=["user@example.com", doc.contact_email],
-    subject=_("Payment Received: {0}").format(doc.name),
-    template="payment_confirmation",   # uses templates/email/<n>.html
-    args={"doc": doc, "amount": doc.grand_total},
-    delayed=False,      # True = queued, False = immediate
-    reference_doctype=doc.doctype,
-    reference_name=doc.name,
-)
+def on_submit(doc, method):
+    frappe.enqueue(          # never block HTTP — always enqueue
+        "myapp.tasks.notifications.send_submit_email",
+        queue="short",
+        doc_name=doc.name,
+        doctype=doc.doctype,
+    )
+```
+```python
+# tasks/notifications.py
+def send_submit_email(doc_name, doctype):
+    frappe.set_user("Administrator")
+    doc = frappe.get_doc(doctype, doc_name)
+    frappe.sendmail(
+        recipients=[doc.contact_email],
+        subject=_("{0} Submitted: {1}").format(doctype, doc_name),
+        template="<template_name>",
+        args={"doc": doc},
+        reference_doctype=doctype,
+        reference_name=doc_name,
+    )
 ```
 
-### 3. Desk Notification (real-time bell icon)
+**Desk real-time alert:**
 ```python
 frappe.publish_realtime(
     event="eval_js",
-    message="frappe.show_alert({message: 'Order approved!', indicator: 'green'})",
-    user=target_user
-)
-
-# Or persistent notification
-notification = frappe.new_doc("Notification Log")
-notification.subject = "Approval Required"
-notification.for_user = approver_user
-notification.type = "Alert"
-notification.document_type = doc.doctype
-notification.document_name = doc.name
-notification.insert(ignore_permissions=True)
-```
-
-### 4. WhatsApp / SMS (via integration)
-```python
-# Via background job to avoid blocking
-enqueue(
-    "myapp.integrations.whatsapp.send_message",
-    queue="short",
-    phone=doc.contact_mobile,
-    message=f"Your order {doc.name} has been confirmed.",
+    message=f"frappe.show_alert({{message: 'Order {doc.name} approved!', indicator: 'green'}})",
+    user=target_user,
 )
 ```
 
-### 5. Email Template (Jinja)
-```html
-<!-- templates/email/payment_confirmation.html -->
-<p>Dear {{ doc.customer_name }},</p>
-<p>We have received your payment of <strong>{{ doc.grand_total }}</strong>
-   for invoice {{ doc.name }}.</p>
-<p>Thank you for your business.</p>
-```
-
-## Always Include
-- Email template .html file if custom template needed
-- Background job wrapper if heavy (don't block HTTP)
-- Unsubscribe link note for bulk emails
-- Error handling so notification failure doesn't break main flow
+## Step 3: Guardrails
+- Never call `frappe.sendmail()` directly in a controller — always enqueue it
+- For bulk emails (>50 recipients) → use background job with batch of 50
+- Notification failure must NEVER raise an exception that blocks the main transaction — wrap in try/except
 
 ## Examples
 ```
 /frappe-notify email customer when Sales Order is submitted
-/frappe-notify alert accounts team on Slack when invoice is overdue by 7 days
-/frappe-notify WhatsApp message to supplier when Purchase Order is placed
-/frappe-notify desk notification to Sales Manager when credit limit is exceeded
-/frappe-notify daily digest email to management: new orders, pending payments, low stock
-/frappe-notify SMS to delivery person when Delivery Note is submitted
+/frappe-notify desk alert to Sales Manager when credit limit is exceeded on submit
+/frappe-notify daily digest email to management: new orders, pending payments
+/frappe-notify WhatsApp to delivery person when Delivery Note is submitted
 ```

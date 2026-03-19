@@ -1,106 +1,110 @@
-# /frappe-dashboard — Create Dashboards and Charts
+# Frappe Dashboard
+Create a Frappe Dashboard with Number Cards, Charts, and live data.
 
-## Purpose
-Create Frappe Dashboards, Number Cards, and Charts that display
-live business data. Covers both the no-code Dashboard DocType
-and custom Vue/JS-based dashboards.
+## Step 1: Classify from $ARGUMENTS
+| Component Needed | Indicator |
+|-----------------|-----------|
+| Number Card (single KPI) | "total X", "count of", "sum of" |
+| Dashboard Chart | "trend", "monthly", "bar chart", "line chart" |
+| Full Dashboard | "dashboard", multiple KPIs mentioned |
+| Custom Vue dashboard | "real-time", "interactive", "complex layout" |
 
-## Input
-$ARGUMENTS = what KPIs or data should be on the dashboard
+Default to Frappe's built-in Dashboard + Number Cards + Charts (fixture-based).
+Use custom Vue only if real-time updates or complex interactions are required.
 
-## Dashboard Components
+## Step 2: Read Data Source
+1. Identify which DocType(s) hold the data
+2. Read the DocType `.json` to confirm field names
+3. Read `apps/<app>/<app>/api/` for any existing stats endpoints
 
-### 1. Number Card (KPI metric)
-```python
-# Create via: Dashboard Number Card → New
-# Or as fixture:
+## Step 3: Generate Number Cards
+For each KPI in $ARGUMENTS, generate a fixture JSON:
+```json
 {
     "doctype": "Dashboard Number Card",
-    "name": "Total Open Orders",
-    "document_type": "Sales Order",
+    "name": "<Descriptive Name>",
+    "document_type": "<DocType>",
     "function": "Count",
-    "filters_json": '[["docstatus","=",1],["status","!=","Closed"]]',
+    "filters_json": "[[\\"docstatus\\",\\"=\\",1],[\\"status\\",\\"!=\\",\\"Closed\\"]]",
     "color": "#1B4F8A",
-    "label": "Open Sales Orders"
+    "label": "<Human-Readable Label>",
+    "module": "<Module>"
 }
 ```
+Function options: `Count`, `Sum`, `Average`, `Min`, `Max`
 
-### 2. Dashboard Chart
-```python
-# Chart types: Line, Bar, Percentage, Pie, Donut, Heatmap
+## Step 4: Generate Dashboard Chart
+```json
 {
     "doctype": "Dashboard Chart",
-    "name": "Monthly Sales",
-    "document_type": "Sales Invoice",
+    "name": "<Chart Name>",
+    "document_type": "<DocType>",
     "chart_type": "Sum",
-    "based_on": "posting_date",
-    "value_based_on": "grand_total",
+    "based_on": "<date_field>",
+    "value_based_on": "<amount_field>",
     "timespan": "Last Year",
     "time_interval": "Monthly",
-    "filters_json": '[["docstatus","=",1]]'
+    "filters_json": "[[\\"docstatus\\",\\"=\\",1]]",
+    "chart_name": "<Chart Name>",
+    "module": "<Module>"
+}
+```
+Chart types: `Line`, `Bar`, `Percentage`, `Pie`, `Donut`, `Heatmap`
+
+## Step 5: Generate Dashboard Definition
+```json
+{
+    "doctype": "Dashboard",
+    "name": "<Dashboard Name>",
+    "module": "<Module>",
+    "is_default": 0,
+    "cards": [
+        {"card": "<Card Name 1>"},
+        {"card": "<Card Name 2>"}
+    ],
+    "charts": [
+        {"chart": "<Chart Name>", "width": "Full"}
+    ]
 }
 ```
 
-### 3. Custom API-backed Chart (Script Report → Chart)
+## Step 6: Generate Custom API (if chart needs complex logic)
 ```python
-def get_chart_data(filters):
-    data = frappe.db.sql("""
-        SELECT
-            MONTH(transaction_date) as month,
-            SUM(grand_total) as total
-        FROM `tabSales Order`
-        WHERE docstatus = 1
-          AND YEAR(transaction_date) = %(year)s
-        GROUP BY MONTH(transaction_date)
-    """, filters, as_dict=True)
-
+# api/dashboard.py
+@frappe.whitelist()
+def get_stats():
+    frappe.has_permission("Sales Order", throw=True)
     return {
-        "data": {
-            "labels": [row.month for row in data],
-            "datasets": [{"values": [row.total for row in data]}]
-        },
-        "type": "bar",
-        "colors": ["#1B4F8A"],
+        "open_orders":     frappe.db.count("Sales Order",
+                               {"docstatus": 1, "status": "To Deliver and Bill"}),
+        "overdue_invoices":frappe.db.count("Sales Invoice",
+                               {"docstatus": 1, "outstanding_amount": [">", 0],
+                                "due_date":   ["<", frappe.utils.today()]}),
+        "today_collection":frappe.db.get_value("Payment Entry",
+                               {"docstatus": 1,
+                                "posting_date": frappe.utils.today()},
+                               "sum(paid_amount)") or 0,
     }
 ```
 
-### 4. Custom Vue Dashboard (for complex requirements)
-```vue
-<template>
-  <div class="grid grid-cols-3 gap-4 p-4">
-    <!-- KPI Cards -->
-    <StatCard title="Open Orders" :value="stats.data?.open_orders" color="blue" />
-    <StatCard title="Overdue Invoices" :value="stats.data?.overdue" color="red" />
-    <StatCard title="Today's Collection" :value="stats.data?.collection" color="green" />
-
-    <!-- Chart -->
-    <div class="col-span-3">
-      <BarChart :data="salesChart.data" />
-    </div>
-  </div>
-</template>
-
-<script setup>
-import { createResource } from 'frappe-ui'
-const stats = createResource({
-    url: 'myapp.api.dashboard.get_stats',
-    auto: true,
-})
-</script>
+## Step 7: Export Fixtures
+```bash
+bench --site <site> export-fixtures --app <app>
+git add <app>/fixtures/
+git commit -m "feat(dashboard): add <Dashboard Name> dashboard"
+# Access: Desk → Dashboards → <Dashboard Name>
 ```
 
-## Always Include
-- Dashboard fixture for deployment consistency
-- Refresh interval configuration
-- Role-based access (who can see this dashboard)
-- Mobile-responsive layout for Vue dashboards
+## Step 8: Guardrails
+Stop and ask if:
+- More than 6 Number Cards requested → recommend grouping into multiple dashboards
+- Chart requires data from multiple DocTypes → must use Script Report as data source, not built-in chart
+- Real-time refresh needed → recommend custom Vue dashboard via `/frappe-vue`
 
 ## Examples
 ```
-/frappe-dashboard sales team dashboard: open orders, today's collection, monthly target vs actual
-/frappe-dashboard accounts dashboard: overdue invoices aging, daily receipts, pending payments
-/frappe-dashboard operations dashboard: pending deliveries, stock alerts, open POs
-/frappe-dashboard management executive view: revenue MTD, top customers, collection efficiency
-/frappe-dashboard customer portal dashboard: their orders, invoices, payment history
-/frappe-dashboard HR dashboard: headcount, attendance today, pending leave approvals
+/frappe-dashboard sales team: open orders, today collection, monthly target vs actual chart
+/frappe-dashboard accounts: overdue invoices aging, daily receipts, pending payments
+/frappe-dashboard management: revenue MTD, top 5 customers, collection efficiency trend
+/frappe-dashboard operations: pending deliveries, stock alerts, open purchase orders
 ```

@@ -1,75 +1,67 @@
-# /frappe-fixture — Manage Frappe Fixtures
+# Frappe Fixture
+Export, import, audit, or fix fixtures for Frappe config management.
 
-## Purpose
-Export, import, audit, or troubleshoot Frappe fixtures (Custom Fields,
-Roles, Workflows, Print Formats, Property Setters, etc.)
+## Step 1: Classify Task from $ARGUMENTS
+| Keyword | Action |
+|---------|--------|
+| `export` / `after adding` / `after changing` | Run export + show git commands |
+| `import` / `fresh site` / `after pull` | Run import + verify |
+| `missing` / `not showing` / `why` | Audit hooks.py fixtures list |
+| `failing` / `error` / `conflict` | Diagnose import error |
+| `what should` / `audit` | Full fixtures checklist |
 
-## Input
-$ARGUMENTS = what you want to do with fixtures
+## Step 2: Read Current Config
+1. Read `apps/<app>/<app>/hooks.py` — find the `fixtures` list
+2. Check `apps/<app>/<app>/fixtures/` — list existing fixture JSON files
 
-## Operations
+## Step 3: Execute the Action
 
-### Export (most common)
+**Export:**
 ```bash
-# Export all fixtures defined in hooks.py
 bench --site <site> export-fixtures --app <app>
-
-# Export specific DocType fixtures
-bench --site <site> export-fixtures --app <app> --doctype "Custom Field"
-
-# After export, always commit
-git add <app>/fixtures/
-git commit -m "chore(fixtures): export <what changed>"
+git -C apps/<app> add <app>/fixtures/
+git -C apps/<app> status   # confirm what changed
+git -C apps/<app> commit -m "chore(fixtures): <describe what changed>"
 ```
 
-### Import (fresh site / after git pull)
+**Import:**
 ```bash
 bench --site <site> import-fixtures --app <app>
+# Verify: check that Custom Fields appear on the target DocType
 ```
 
-### Audit — What Should Be in Fixtures?
-Always fixture these (check hooks.py `fixtures` list):
-- Custom Field
-- Custom Script
-- Property Setter
-- Role
-- Role Profile
-- Workflow (app-specific ones)
-- Print Format (custom ones)
-- Email Template
-- Letter Head
-- Notification (custom)
-
-### Common Fixture Issues Diagnosed
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| Custom field missing on fresh site | Not in fixtures list | Add to fixtures in hooks.py, export |
-| Fixture import fails with conflict | Duplicate name | Check for existing record, delete or rename |
-| Workflow not working after import | Missing Role in fixture | Add Role to fixtures list |
-| Print Format blank after import | Missing Letter Head fixture | Add Letter Head to fixtures |
-
-### Verify hooks.py fixtures config:
+**Audit — verify hooks.py fixtures list includes all of:**
 ```python
 fixtures = [
-    "Custom Field",
-    "Property Setter",
+    "Custom Field",       # ← always required
+    "Property Setter",    # ← always required
     "Custom Script",
     "Role",
-    {"dt": "Workflow", "filters": [["module", "=", "My Module"]]},
-    {"dt": "Print Format", "filters": [["module", "=", "My Module"]]},
+    "Role Profile",
+    {"dt": "Workflow",      "filters": [["module", "=", "<Module>"]]},
+    {"dt": "Print Format",  "filters": [["module", "=", "<Module>"]]},
+    {"dt": "Email Template","filters": [["module", "=", "<Module>"]]},
+    {"dt": "Notification",  "filters": [["module", "=", "<Module>"]]},
 ]
 ```
+Report any missing entries and add them.
 
-## Output
-1. Commands to run
-2. Updated hooks.py fixtures list if needed
-3. Git commands to commit
+**Diagnose import failure:**
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `IntegrityError: Duplicate entry` | Record already exists | Delete existing or skip |
+| `LinkValidationError` | Referenced DocType missing | Import dependency first |
+| `ValidationError: Missing field` | DocType schema mismatch | Run `bench migrate` first |
+
+## Step 4: Guardrails
+Stop and ask if:
+- Fixtures folder is empty but hooks.py has entries → fixtures were never exported; export first
+- User wants to export ALL DocTypes → warn about large file size, ask to filter by module
 
 ## Examples
 ```
 /frappe-fixture export after adding new custom fields to Sales Order
-/frappe-fixture why is my custom field missing on the staging server
-/frappe-fixture add Workflow for Purchase Order approval to fixtures
-/frappe-fixture full audit of what should be in fixtures for our app
 /frappe-fixture import failing with IntegrityError on fresh site
+/frappe-fixture audit what should be in fixtures for our app
+/frappe-fixture add Purchase Order Approval Workflow to fixtures
 ```

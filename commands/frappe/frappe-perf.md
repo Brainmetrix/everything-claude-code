@@ -1,92 +1,102 @@
-# /frappe-perf — Diagnose and Fix Performance Issues
+# Frappe Performance
+Diagnose and fix performance bottlenecks: slow queries, N+1, blocking HTTP, missing indexes.
 
-## Purpose
-Identify and fix performance bottlenecks in Frappe apps: slow queries,
-N+1 problems, missing indexes, blocking HTTP requests, bloated context.
+## Step 1: Classify Bottleneck from $ARGUMENTS
+| Symptom | Likely Cause | Start At |
+|---------|-------------|----------|
+| Slow page / list view | Unindexed filter or unbounded query | Read the list view query |
+| Slow form load | Heavy `onload`, fetch_from chains | Read the client script + controller |
+| Slow API response | N+1 or missing permission cache | Read the API function |
+| Background job taking hours | N+1 in loop or missing batch commits | Read the task function |
+| High DB CPU | Full table scans, no index | Run EXPLAIN on the query |
 
-## Input
-$ARGUMENTS = what is slow or the file/query to optimize
+## Step 2: Read the Target Code
+Read the file identified in Step 1 before diagnosing.
 
-## Diagnostic Steps
-
-### Step 1 — Classify the bottleneck
-- **Slow page load** → check report query, DocType list view filters
-- **Slow form load** → check fetch_from fields, onload scripts, heavy validate()
-- **Slow API response** → check for missing has_permission cache, unindexed filters
-- **Background job taking too long** → check for N+1, missing batch processing
-- **High DB load** → check for missing indexes, full table scans
-
-### Step 2 — Find slow queries
+## Step 3: Run Diagnostic Queries
 ```bash
-# Enable slow query log in MariaDB
+# Find slow queries
 bench --site <site> mariadb
-> SET GLOBAL slow_query_log = ON;
-> SET GLOBAL long_query_time = 1;  -- log queries > 1 second
+> SHOW FULL PROCESSLIST;
+> SELECT * FROM information_schema.PROCESSLIST WHERE TIME > 2;
 
-# Or use EXPLAIN
-EXPLAIN SELECT * FROM `tabSales Order` WHERE customer = 'CUST-001';
-
-# Frappe query profiler
-bench --site <site> console
->>> import frappe
->>> frappe.db.sql("EXPLAIN SELECT ...")
+# EXPLAIN a specific query
+> EXPLAIN SELECT ... FROM `tabSales Order` WHERE customer = 'CUST-001';
+# Look for: type=ALL (bad), key=NULL (no index used)
 ```
 
-### Step 3 — Common Fixes Applied
+## Step 4: Apply Fix Loop (one issue at a time)
 
-**N+1 in a loop:**
+**Fix: N+1 query in loop**
 ```python
-# ❌ WRONG
+# BEFORE (one query per iteration)
 for name in order_names:
-    doc = frappe.get_doc("Sales Order", name)  # one query per iteration
+    doc = frappe.get_doc("Sales Order", name)
 
-# ✅ CORRECT
+# AFTER (single bulk fetch)
 docs = frappe.get_all("Sales Order",
     filters={"name": ["in", order_names]},
-    fields=["name", "customer", "grand_total"])
+    fields=["name", "customer", "grand_total", "status"])
 ```
 
-**Missing index via patch:**
+**Fix: Unbounded list**
 ```python
-# patches/v2_0/add_index_sales_order_customer.py
-def execute():
-    if not frappe.db.has_index("tabSales Order", "customer"):
-        frappe.db.add_index("Sales Order", ["customer"])
+# BEFORE
+frappe.get_list("Sales Order", filters=filters)
+
+# AFTER
+frappe.get_list("Sales Order", filters=filters, page_length=100, limit_page_length=100)
 ```
 
-**Uncached Settings doc:**
+**Fix: Uncached Settings**
 ```python
-# ❌ WRONG — fetches from DB every call
+# BEFORE (DB hit every call)
 settings = frappe.get_doc("My Settings")
 
-# ✅ CORRECT — cached in request context
+# AFTER (cached per request)
 settings = frappe.get_cached_doc("My Settings")
 ```
 
-**Heavy work in HTTP:**
+**Fix: Missing DB index (via patch)**
 ```python
-# ❌ WRONG — blocks for 30 seconds
-@frappe.whitelist()
-def generate_report():
-    # heavy processing...
+# patches/v<X>_<Y>/add_index_<field>.py
+def execute():
+    if not frappe.db.has_index("Sales Order", "customer"):
+        frappe.db.add_index("Sales Order", ["customer"])
+```
 
-# ✅ CORRECT — enqueue and return job id
+**Fix: Blocking HTTP request**
+```python
+# BEFORE (blocks for 30s)
+@frappe.whitelist()
+def generate_report(): ...heavy work...
+
+# AFTER (returns job ID immediately)
 @frappe.whitelist()
 def generate_report():
     job = enqueue("myapp.tasks.generate_report", queue="long")
-    return {"job_id": job.id}
+    return {"job_id": job.id, "message": "Report generation started"}
 ```
 
-## Output
-1. Identified bottleneck (specific file + line)
-2. Fix with before/after code
-3. How to verify improvement
+## Step 5: Verify Improvement
+```bash
+# Re-run EXPLAIN after adding index — should show type=ref or type=range
+bench --site <site> mariadb
+> EXPLAIN SELECT ...;
+
+# Benchmark API response time
+time curl -X POST https://<site>/api/method/<endpoint>
+```
+
+## Step 6: Guardrails
+Stop and ask if:
+- Adding index to a table with > 1M rows → warn about lock time, recommend doing it during maintenance window
+- Caching a Settings doc that changes frequently → warn about stale data, ask about cache invalidation
 
 ## Examples
 ```
 /frappe-perf Sales Order list view taking 8 seconds to load
 /frappe-perf api/dashboard.py endpoint slow with 1000+ customers
-/frappe-perf background job sync_orders running for 2 hours
-/frappe-perf optimize the monthly GST report query
-/frappe-perf Customer portal page loads slow on mobile
+/frappe-perf background sync_orders job running for 2 hours
+/frappe-perf optimize monthly GST report query
 ```

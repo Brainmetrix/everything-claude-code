@@ -1,122 +1,177 @@
-# /frappe-print — Create Print Formats and PDF Generation
+# Frappe Print Format
+Create a custom Print Format for a DocType or a PDF generation API.
 
-## Purpose
-Create custom Print Formats for DocTypes, PDF generation via API,
-and custom letter heads for professional document output.
+## Step 1: Classify Task from $ARGUMENTS
+| Task | Indicator |
+|------|-----------|
+| New print format | "create", "design", "print format for X" |
+| PDF download API | "download pdf", "generate pdf via API", "bulk PDF" |
+| Fix existing | "blank", "broken", "not printing" |
 
-## Input
-$ARGUMENTS = DocType name and what the print format should look like
+## Step 2: Read DocType Structure
+Read `apps/<app>/<app>/doctype/<doctype>/<doctype>.json` to understand:
+- All field names and types
+- Child table names and their fields
+- Whether the DocType is submittable
 
-## Print Format Types
+## Step 3: Generate Print Format HTML
+Create file: `apps/<app>/<app>/print_formats/<format_name>.html`
 
-### 1. Jinja Print Format (most flexible)
 ```html
-<!-- Standard Frappe Print Format — set Format Type: Jinja -->
 <style>
-  .print-format { font-family: Arial, sans-serif; font-size: 12px; }
-  .header { border-bottom: 2px solid #1B4F8A; margin-bottom: 20px; }
-  .table { width: 100%; border-collapse: collapse; }
-  .table th { background: #1B4F8A; color: white; padding: 8px; }
-  .table td { border: 1px solid #ddd; padding: 6px; }
-  .total-row { font-weight: bold; background: #f5f5f5; }
+  /* Reset */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; font-size: 11pt; color: #222; }
+
+  /* Layout */
+  .pf-header  { border-bottom: 2px solid #1B4F8A; padding-bottom: 12px; margin-bottom: 16px; }
+  .pf-section { margin-bottom: 16px; }
+  .pf-label   { font-weight: bold; color: #555; font-size: 9pt; }
+
+  /* Table */
+  .pf-table           { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+  .pf-table th        { background: #1B4F8A; color: #fff; padding: 6px 8px;
+                        font-size: 9pt; text-align: left; }
+  .pf-table td        { border: 1px solid #ddd; padding: 5px 8px; font-size: 10pt; }
+  .pf-table tr:nth-child(even) td { background: #f9f9f9; }
+  .pf-total-row td    { font-weight: bold; background: #eef3f8 !important; }
+
+  /* Footer */
+  .pf-footer  { border-top: 1px solid #ddd; margin-top: 20px; padding-top: 8px;
+                font-size: 9pt; color: #777; }
+
+  /* Page break for long docs */
+  .page-break { page-break-after: always; }
 </style>
 
-<div class="print-format">
-  <!-- Header -->
-  <div class="header">
-    <table width="100%">
-      <tr>
-        <td><img src="{{ company_logo }}" height="60"></td>
-        <td style="text-align:right">
-          <h2>{{ doc.doctype }}</h2>
-          <p><strong>{{ doc.name }}</strong></p>
-        </td>
-      </tr>
-    </table>
-  </div>
+<!-- HEADER: Company + Document Info -->
+<div class="pf-header">
+  <table width="100%"><tr>
+    <td width="60%">
+      {% if letter_head %}<div>{{ letter_head }}</div>{% endif %}
+      <div style="font-size:9pt;color:#555">{{ doc.company }}</div>
+    </td>
+    <td width="40%" style="text-align:right">
+      <div style="font-size:16pt;font-weight:bold;color:#1B4F8A">
+        {{ doc.doctype | upper }}
+      </div>
+      <div class="pf-label">{{ doc.name }}</div>
+      <div style="font-size:9pt">Date: {{ doc.<date_field> }}</div>
+    </td>
+  </tr></table>
+</div>
 
-  <!-- Document Details -->
-  <table width="100%">
+<!-- PARTY INFO -->
+<div class="pf-section">
+  <table width="100%"><tr>
+    <td width="50%">
+      <div class="pf-label">Bill To</div>
+      <div>{{ doc.<customer_field> }}</div>
+      {% if doc.<address_field> %}<div style="font-size:9pt">{{ doc.<address_field> }}</div>{% endif %}
+    </td>
+    <td width="50%">
+      <table style="float:right">
+        {% for label, value in [
+            ("Due Date",  doc.<due_date_field>),
+            ("Terms",     doc.<payment_terms_field>),
+        ] %}
+        <tr>
+          <td class="pf-label" style="padding-right:12px">{{ label }}</td>
+          <td>{{ value or "—" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </td>
+  </tr></table>
+</div>
+
+<!-- ITEMS TABLE -->
+<table class="pf-table">
+  <thead><tr>
+    <th style="width:8%">#</th>
+    <th style="width:40%">Item</th>
+    <th style="width:10%">Qty</th>
+    <th style="width:12%">UOM</th>
+    <th style="width:15%">Rate</th>
+    <th style="width:15%">Amount</th>
+  </tr></thead>
+  <tbody>
+    {% for item in doc.items %}
     <tr>
-      <td><strong>Customer:</strong> {{ doc.customer_name }}</td>
-      <td><strong>Date:</strong> {{ doc.transaction_date }}</td>
+      <td>{{ loop.index }}</td>
+      <td>{{ item.item_name }}
+        {% if item.description %}
+        <div style="font-size:8pt;color:#666">{{ item.description }}</div>
+        {% endif %}
+      </td>
+      <td>{{ item.qty }}</td>
+      <td>{{ item.uom }}</td>
+      <td style="text-align:right">{{ item.rate | money }}</td>
+      <td style="text-align:right">{{ item.amount | money }}</td>
     </tr>
-  </table>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr class="pf-total-row">
+      <td colspan="5" style="text-align:right">Grand Total</td>
+      <td style="text-align:right">{{ doc.grand_total | money }}</td>
+    </tr>
+    {% if doc.in_words %}
+    <tr><td colspan="6" style="font-size:9pt;font-style:italic">
+      In Words: {{ doc.in_words }}
+    </td></tr>
+    {% endif %}
+  </tfoot>
+</table>
 
-  <!-- Items Table -->
-  <table class="table" style="margin-top:20px">
-    <thead>
-      <tr>
-        <th>Item</th><th>Qty</th><th>Rate</th><th>Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in doc.items %}
-      <tr>
-        <td>{{ item.item_name }}</td>
-        <td>{{ item.qty }}</td>
-        <td>{{ item.rate | money }}</td>
-        <td>{{ item.amount | money }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-    <tfoot>
-      <tr class="total-row">
-        <td colspan="3">Total</td>
-        <td>{{ doc.grand_total | money }}</td>
-      </tr>
-    </tfoot>
-  </table>
+<!-- FOOTER -->
+<div class="pf-footer">
+  <table width="100%"><tr>
+    <td>{{ doc.terms or "" }}</td>
+    <td style="text-align:right">
+      <div style="margin-top:40px;border-top:1px solid #aaa;padding-top:4px">
+        Authorised Signatory
+      </div>
+    </td>
+  </tr></table>
 </div>
 ```
 
-### 2. Generate PDF via API
+## Step 4: Generate PDF Download API (if requested)
 ```python
 @frappe.whitelist()
-def download_pdf(doctype, name, format=None):
-    """Generate and return PDF for any DocType."""
+def download_pdf(doctype, name, format_name=None):
+    """Generate and stream a PDF for any DocType."""
     frappe.has_permission(doctype, doc=name, throw=True)
-
-    pdf_content = frappe.get_print(
+    pdf = frappe.get_print(
         doctype=doctype,
         name=name,
-        print_format=format or "Standard",
+        print_format=format_name or "Standard",
         as_pdf=True,
-        letterhead="My Letter Head",
+        letterhead=frappe.db.get_single_value("Print Settings", "default_letter_head"),
     )
-
-    frappe.local.response.filename = f"{name}.pdf"
-    frappe.local.response.filecontent = pdf_content
-    frappe.local.response.type = "pdf"
+    frappe.local.response.filename     = f"{name}.pdf"
+    frappe.local.response.filecontent  = pdf
+    frappe.local.response.type         = "pdf"
 ```
 
-### 3. Bulk PDF Generation (background)
-```python
-def bulk_print_invoices(invoice_names):
-    """Generate PDFs for multiple invoices and zip them."""
-    import zipfile, io
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w') as zf:
-        for name in invoice_names:
-            pdf = frappe.get_print("Sales Invoice", name, as_pdf=True)
-            zf.writestr(f"{name}.pdf", pdf)
-    # Save to File DocType and return URL
+## Step 5: Register in Fixtures
+```bash
+bench --site <site> export-fixtures --app <app>
+git add <app>/fixtures/
+git commit -m "feat(print): add <Format Name> print format"
 ```
 
-## Always Include
-- Print Format registered in fixtures
-- Letter Head linked
-- Correct margins for printing (top: 1cm, bottom: 1cm, left/right: 1cm)
-- Page break handling for multi-page docs
-- Signature/stamp section if needed
-- Amount in words if it's a financial document
+## Step 6: Guardrails
+Stop and ask if:
+- Format needs GST fields → ask which GST type (B2B/B2C) and tax component names
+- Needs barcode or QR code → confirm the field containing the value to encode
+- Existing standard format exists → ask whether to replace or create a new named format
 
 ## Examples
 ```
 /frappe-print Sales Invoice with GST details, amount in words, bank details
 /frappe-print Purchase Order professional format with terms and conditions
-/frappe-print Delivery Note with item-wise barcode and QR code
-/frappe-print custom Tax Invoice format compliant with Indian GST rules
-/frappe-print Employee Offer Letter with dynamic salary table
-/frappe-print bulk PDF download API for multiple invoices as zip
+/frappe-print Delivery Note with item barcodes
+/frappe-print bulk PDF download API for multiple invoices returned as zip
 ```

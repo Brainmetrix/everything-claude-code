@@ -1,66 +1,100 @@
-# /frappe-fix — Debug and Fix Frappe Errors
+# Frappe Fix
+Diagnose and fix errors in Frappe/ERPNext apps incrementally and safely.
 
-## Purpose
-Diagnose and fix errors in Frappe/ERPNext apps with full context awareness.
-Works with Python tracebacks, JS console errors, bench build failures,
-migration errors, and RQ job failures.
+## Step 1: Classify the Error from $ARGUMENTS
+| Error Pattern | Type | Where to Look |
+|---------------|------|---------------|
+| `Traceback (most recent call last)` | Python exception | File + line in traceback |
+| `frappe.exceptions.ValidationError` | Business logic | Controller validate() |
+| `frappe.exceptions.PermissionError` | Auth issue | has_permission() / roles |
+| `OperationalError: 1054 Unknown column` | Missing migration | Run bench migrate |
+| `OperationalError: 1062 Duplicate entry` | Uniqueness violation | Check naming_series / unique field |
+| `ImportError` / `ModuleNotFoundError` | Bad import path | Check file exists + __init__.py |
+| `AttributeError: 'NoneType'` | None not checked | frappe.get_value() returned None |
+| RQ job silently fails | Worker context | Missing frappe.set_user() |
+| JS console error | Client script | Browser DevTools + client script file |
+| `bench build` fails | Asset build | Node version / missing npm deps |
+| `bench migrate` fails | Patch/schema | Patch file or DocType JSON |
 
-## Input
-$ARGUMENTS = error message, traceback, or description of the problem
+## Step 2: Read the Error Context
+1. Read the **exact file and line number** from the traceback
+2. Read 15 lines around the error for context
+3. If RQ job: read `logs/worker.log` (last 100 lines)
+4. If JS error: read the client script file for that DocType
 
-## Diagnostic Process
+## Step 3: Diagnose Root Cause
+State the root cause in ONE sentence before writing any fix.
+Common Frappe root causes:
+| Symptom | Root Cause |
+|---------|-----------|
+| `'NoneType' has no attribute 'X'` | `frappe.get_value()` returned None — no existence check |
+| `Document has been modified after you opened it` | Concurrent save — use `frappe.db.set_value()` for atomic updates |
+| `frappe.db.commit() not allowed` | `commit()` called inside `validate()` — move to `after_insert` |
+| `No module named 'myapp.xyz'` | Wrong import path or missing file — verify path |
+| `OperationalError: Unknown column` | Field added to DocType JSON but `bench migrate` not run |
+| `PermissionError` in API | `frappe.has_permission()` missing or role not assigned |
+| `Job exceeded timeout` | Task in wrong queue — move to `long` queue |
+| Scheduled task not running | `bench --site <site> doctor` → check scheduler status |
 
-### Step 1 — Classify the error type
-- **Python traceback** → read the file + line number immediately
-- **frappe.ValidationError** → look for missing validate() logic
-- **frappe.PermissionError** → check has_permission() and role setup
-- **IntegrityError / DB error** → check for missing migration, wrong field type
-- **ImportError / AttributeError** → check for typos, missing __init__.py
-- **RQ job failure** → check worker.log, look for missing frappe.set_user()
-- **JS console error** → check browser console + client script logic
-- **bench build failure** → check node/npm versions, missing dependencies
-- **bench migrate failure** → look for patch errors or schema conflicts
+## Step 4: Fix Loop (one issue at a time)
+For each error found:
+1. **Show minimal diff** — smallest change that resolves the issue
+2. **Re-run verification** — show exact command to confirm fix
+3. **Move to next** — only proceed after previous error is resolved
 
-### Step 2 — Read relevant files
-Before suggesting any fix, read:
-- The exact file and line number from the traceback
-- The DocType controller if error is in a lifecycle hook
-- hooks.py if error is in a doc_event handler
-- The test file if tests are failing
+Fix template:
+```python
+# BEFORE (the problem)
+<original code>
 
-### Step 3 — Diagnose root cause
-State the root cause in one sentence before showing any fix.
+# AFTER (the fix)
+<fixed code>
+```
 
-### Step 4 — Fix
-- Show minimal diff — only what changes
-- Never suggest restarting bench as a fix unless it's clearly a process issue
-- Never suggest clearing cache as a primary fix
-- If the fix requires a migration, show the patch file
+## Step 5: Verify Fix
+```bash
+# Python error → re-run the operation that triggered it
+bench --site <site> console
+>>> <reproduce the operation>
 
-## Output Format
-1. **Root cause** (one sentence)
-2. **Fix** (minimal code diff)
-3. **How to verify** (exact bench command to confirm it's fixed)
-4. **Why this happened** (one sentence to prevent recurrence)
+# Migration error → re-run migration
+bench --site <site> migrate --verbose
 
-## Common Frappe Error Patterns Known
+# Test failure → run specific test
+bench run-tests --app <app> --doctype "<DocType>" --verbose
 
-| Error | Root Cause | Fix |
-|-------|-----------|-----|
-| `'NoneType' has no attribute 'name'` | frappe.get_value() returned None | Add None check before accessing |
-| `Document has been modified after you have opened it` | Concurrent save conflict | Use frappe.db.set_value() for atomic updates |
-| `frappe.db.commit() not allowed` | commit() inside validate | Move commit to after_insert/on_submit |
-| `No module named 'myapp.xyz'` | Missing file or wrong import path | Check file exists, check __init__.py |
-| `OperationalError: (1054) Unknown column` | Missing bench migrate | Run bench migrate |
-| `PermissionError: No permission for Sales Order` | Missing has_permission check | Add frappe.has_permission() |
-| `Job exceeded maximum timeout` | Heavy task in short queue | Move to long queue, increase timeout |
+# RQ job → re-enqueue and watch logs
+tail -f logs/worker.log
+```
+
+## Step 6: Guardrails
+Stop and ask if:
+- The same error persists after 2 fix attempts → likely a deeper issue, explain and ask for more context
+- The fix requires modifying ERPNext source → stop, show the correct override approach
+- The fix introduces a new error → report immediately, do not continue fixing
+- `bench migrate` is suggested → verify it's actually needed (missing column) before recommending
+
+## Step 7: Summary
+After fixing, show:
+- Root cause (one sentence)
+- What was changed (file + line)
+- How to verify it's fixed
+- Why it happened (one sentence to prevent recurrence)
+
+## Recovery Strategies
+| Situation | Action |
+|-----------|--------|
+| None check missing | Add `if not value: frappe.throw(...)` before access |
+| Wrong import path | `find apps/<app> -name "*.py" \| grep <module>` |
+| Missing migration | `bench --site <site> migrate` |
+| RQ job context | Add `frappe.set_user("Administrator")` as first line |
+| Scheduler not running | `bench --site <site> doctor` → restart if needed |
+| Patch failing | Run patch manually with `--verbose`, fix, mark as run |
 
 ## Examples
 ```
 /frappe-fix TypeError: 'NoneType' object has no attribute 'customer' in payment handler
-/frappe-fix Sales Order submission failing with ValidationError: Credit limit exceeded but field doesn't exist
+/frappe-fix Sales Order submit failing with ValidationError but field exists in form
 /frappe-fix bench migrate failing on patch myapp.patches.v2.migrate_invoice_status
-/frappe-fix RQ background job silently failing — no error in logs
-/frappe-fix frappe.ui.form.on refresh not firing on custom DocType
-/frappe-fix OperationalError on tabCustomer after adding custom field
+/frappe-fix RQ background job silently failing with no error in frappe.log
 ```

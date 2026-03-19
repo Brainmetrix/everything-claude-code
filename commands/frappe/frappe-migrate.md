@@ -1,121 +1,134 @@
-# /frappe-migrate — Handle Migrations, Schema Changes, Version Upgrades
+# Frappe Migrate
+Diagnose and fix bench migrate failures, schema changes, and version upgrades.
 
-## Purpose
-Diagnose and fix bench migrate failures, handle schema changes safely,
-and guide ERPNext version upgrades step by step.
+## Step 1: Classify from $ARGUMENTS
+| Indicator | Action |
+|-----------|--------|
+| `PatchError` / patch name | Debug failing patch |
+| `OperationalError` / `Unknown column` | Schema conflict |
+| `ValidationError` / DocType JSON | Fix DocType JSON |
+| `upgrade` / version number | Version upgrade guide |
+| `stuck` / `hanging` / `no error` | Diagnose stuck migration |
+| `fresh site` | Full setup from scratch |
 
-## Input
-$ARGUMENTS = migration error, schema change needed, or upgrade target version
+## Step 2: Read Relevant Files
+| Error Type | Files to Read |
+|-----------|---------------|
+| Patch failure | The patch `.py` file from the traceback |
+| DocType JSON error | The `.json` file from the traceback |
+| Schema conflict | Run `DESCRIBE \`tab<DocType>\`` in MariaDB |
+| Version upgrade | `apps/<app>/requirements.txt` + current Frappe version |
 
-## Common Migration Failures & Fixes
+## Step 3: Fix Loop (one issue at a time)
 
 ### Patch Failure
-```
-Error: PatchError: Could not run patch myapp.patches.v2.some_patch
-```
 ```bash
-# Check what the patch is trying to do
-cat apps/myapp/myapp/patches/v2/some_patch.py
+# 1. Run with verbose output to see exact error
+bench --site <site> run-patch <app>.patches.<path> --verbose
 
-# Run patch manually with verbose output
-bench --site <site> run-patch myapp.patches.v2.some_patch --verbose
+# 2. Read the patch file and identify the bug
+# 3. Fix the bug (most common issues):
+```
+| Patch Error | Fix |
+|-------------|-----|
+| `OperationalError: Column doesn't exist` | Add `if not frappe.db.has_column(...)` guard |
+| `IntegrityError: Duplicate entry` | Add `if frappe.db.exists(...)` guard |
+| `AttributeError` on doc | Use `frappe.db.sql()` instead of `frappe.get_doc()` in patches |
+| Already applied | Mark manually: `INSERT INTO __PatchLog VALUES ('<patch>')` |
 
-# If patch has a bug, fix it, then mark as run:
+```bash
+# 4. After fixing, mark as applied and re-run full migrate
 bench --site <site> console
->>> frappe.db.sql("INSERT INTO `__PatchLog` VALUES ('myapp.patches.v2.some_patch')")
+>>> frappe.db.sql("INSERT INTO `__PatchLog` (patch) VALUES ('<app>.patches.<path>')")
 >>> frappe.db.commit()
-```
-
-### Schema Conflict
-```
-Error: OperationalError: (1060) Duplicate column name 'custom_field'
-```
-```bash
-# Check current schema
-bench --site <site> mariadb
-> DESCRIBE `tabDocType`;
-
-# Remove duplicate column if safe
-> ALTER TABLE `tabDocType` DROP COLUMN custom_field;
-
-# Re-run migrate
 bench --site <site> migrate
 ```
 
+### Schema Conflict (Unknown column)
+```bash
+bench --site <site> mariadb
+> DESCRIBE `tab<DocType>`;   # check actual schema
+> SHOW CREATE TABLE `tab<DocType>`;
+```
+If column missing → add field to DocType JSON → `bench migrate`
+If column duplicated → `ALTER TABLE \`tab<DocType>\` DROP COLUMN <col>` → `bench migrate`
+
 ### DocType JSON Error
-```
-Error: ValidationError: Invalid DocType JSON for MyDocType
-```
 ```bash
 # Validate JSON syntax
-python3 -m json.tool apps/myapp/myapp/doctype/my_doctype/my_doctype.json
+python3 -m json.tool apps/<app>/<app>/doctype/<n>/<n>.json
 
-# Check for duplicate fieldnames
+# Check duplicate fieldnames
 python3 -c "
 import json
-with open('apps/myapp/myapp/doctype/my_doctype/my_doctype.json') as f:
+with open('apps/<app>/<app>/doctype/<n>/<n>.json') as f:
     doc = json.load(f)
 names = [f['fieldname'] for f in doc.get('fields', [])]
-dupes = [n for n in names if names.count(n) > 1]
-print('Duplicates:', dupes)
+dupes = set(n for n in names if names.count(n) > 1)
+print('Duplicate fieldnames:', dupes)
 "
 ```
 
-### ERPNext Version Upgrade Steps
+### Version Upgrade
 ```bash
-# 1. Backup first — NEVER skip
+# 1. BACKUP FIRST — never skip
 bench --site <site> backup --with-files
 
-# 2. Check upgrade path on frappeframework.com/docs
-# Never skip versions (v14 → v15 → v16, not v14 → v16)
+# 2. Check upgrade path (never skip versions)
+# v13 → v14 → v15 — do NOT jump from v13 → v15
 
-# 3. Update apps
+# 3. Update
 bench update --pull
 
-# 4. Run migrate
+# 4. Migrate
 bench --site <site> migrate
 
-# 5. Check for breaking changes in your custom app
-# - Removed hooks? Renamed APIs? Changed DocType fields?
-bench --site <site> console
->>> import myapp  # check for import errors
-
-# 6. Rebuild assets
+# 5. Rebuild
 bench build --force
 
-# 7. Restart
+# 6. Restart
 bench restart
 ```
 
-## Safe Schema Change Patterns
+### Stuck Migration (no output, no error)
+```bash
+# Check for locked DB processes
+bench --site <site> mariadb
+> SHOW FULL PROCESSLIST;
+> SELECT * FROM information_schema.INNODB_TRX;  -- check for long transactions
 
-### Adding a new field (safe, no patch needed)
-- Add field to DocType JSON → bench migrate handles it
+# Kill blocking process if safe
+> KILL <process_id>;
 
-### Renaming a field (requires patch)
-```python
-# patches/v2_0/rename_field_x_to_y.py
-def execute():
-    if frappe.db.has_column("DocType", "old_field"):
-        frappe.rename_field("DocType", "old_field", "new_field")
+# Retry migrate
+bench --site <site> migrate
 ```
 
-### Changing field type (requires careful patch + data migration)
-```python
-def execute():
-    # 1. Add new field
-    # 2. Migrate data
-    # 3. Leave old field (don't delete — could break existing data)
-    frappe.db.sql("UPDATE `tabDocType` SET new_field = old_field WHERE new_field IS NULL")
-    frappe.db.commit()
+## Step 4: Verify After Fix
+```bash
+bench --site <site> migrate   # should complete cleanly
+bench --site <site> doctor    # confirm scheduler healthy
+bench run-tests --app <app> --verbose  # confirm no regressions
 ```
+
+## Step 5: Guardrails
+Stop and ask if:
+- Suggested fix involves `DROP COLUMN` or `DROP TABLE` → show data impact, require explicit confirmation
+- Version upgrade skips a major version → block and explain correct upgrade path
+- Patch error is in ERPNext core patches → do not modify; report as upstream issue and suggest workaround
+
+## Recovery Strategies
+| Situation | Action |
+|-----------|--------|
+| Migration corrupted data | Restore from backup taken in Step 1 |
+| All patches failing | Check Python environment: `bench pip install -e apps/frappe` |
+| Version mismatch | `bench switch-to-branch <version> --upgrade` |
+| MariaDB version incompatible | Check compatibility matrix on frappeframework.com |
 
 ## Examples
 ```
 /frappe-migrate patch myapp.patches.v2.migrate_status is failing with IntegrityError
-/frappe-migrate upgrade ERPNext from v14 to v15 safely
-/frappe-migrate rename field payment_ref to payment_reference in Payment Entry custom fields
-/frappe-migrate bench migrate stuck at 45% with no error
-/frappe-migrate add index to tabSales Order on customer field via patch
-/frappe-migrate fresh site setup from scratch with all our fixtures and patches
+/frappe-migrate bench migrate stuck at syncing DocTypes with no progress
+/frappe-migrate upgrade ERPNext from v14 to v15
+/frappe-migrate OperationalError: Unknown column custom_ref in tabCustomer
 ```
