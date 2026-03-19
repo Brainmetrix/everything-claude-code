@@ -1,0 +1,55 @@
+{
+  "_comment": "Frappe-specific hook entries. Merge these into the root hooks/hooks.json PostToolUse section.",
+  "hooks": [
+    {
+      "description": "Frappe: detect SQL injection in Python files after edit",
+      "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\.py$\"",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node -e \"\nconst p=process.env.TOOL_INPUT_FILE_PATH||'';\nconst fs=require('fs');\nif(!p.endsWith('.py'))process.exit(0);\ntry{const c=fs.readFileSync(p,'utf8');\nif(/frappe\\.db\\.sql\\s*\\(.*[fF]['\"]/.test(c)||/frappe\\.db\\.sql\\s*\\(.*\\.format\\s*\\(/.test(c)){\nconsole.error('[Frappe Hook] CRITICAL: SQL injection risk in '+p+' — frappe.db.sql() with f-string or .format(). Use %(key)s with dict params.');}}catch(e){}\n\""
+        }
+      ]
+    },
+    {
+      "description": "Frappe: warn if frappe.db.commit() found inside validate() method",
+      "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\.py$\"",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node -e \"\nconst p=process.env.TOOL_INPUT_FILE_PATH||'';\nconst fs=require('fs');\ntry{const c=fs.readFileSync(p,'utf8');\nif(c.match(/def\\s+validate\\s*\\(/m)&&c.match(/frappe\\.db\\.commit\\s*\\(/)){\nconsole.error('[Frappe Hook] CRITICAL: frappe.db.commit() inside validate() detected in '+p+' — remove it, Frappe manages transactions.');}}catch(e){}\n\""
+        }
+      ]
+    },
+    {
+      "description": "Frappe: warn on get_doc() inside a for loop (N+1 query)",
+      "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\.py$\"",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node -e \"\nconst p=process.env.TOOL_INPUT_FILE_PATH||'';\nconst fs=require('fs');\ntry{const c=fs.readFileSync(p,'utf8');\nif(c.match(/for\\s+\\w+\\s+in\\s+/)&&c.match(/frappe\\.get_doc\\s*\\(/)){\nconsole.error('[Frappe Hook] HIGH: frappe.get_doc() inside a loop detected in '+p+' — use frappe.get_all(filters={name:[in,names]}) for bulk fetch.');}}catch(e){}\n\""
+        }
+      ]
+    },
+    {
+      "description": "Frappe: warn on whitelist without has_permission",
+      "matcher": "tool == \"Edit\" && tool_input.file_path matches \"\\.py$\"",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "node -e \"\nconst p=process.env.TOOL_INPUT_FILE_PATH||'';\nconst fs=require('fs');\ntry{const c=fs.readFileSync(p,'utf8');\nif(c.match(/@frappe\\.whitelist/)&&!c.match(/frappe\\.has_permission\\s*\\(/)){\nconsole.error('[Frappe Hook] HIGH: @frappe.whitelist() function in '+p+' may be missing frappe.has_permission() check.');}}catch(e){}\n\""
+        }
+      ]
+    },
+    {
+      "description": "Frappe: warn if editing frappe/ or erpnext/ source directly",
+      "matcher": "tool == \"Edit\" && (tool_input.file_path matches \"/apps/frappe/\" || tool_input.file_path matches \"/apps/erpnext/\")",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "echo '[Frappe Hook] CRITICAL: Editing frappe/erpnext source directly. Use hooks.py doc_events, Custom Fields, and doctype_js overrides instead.' >&2; exit 2"
+        }
+      ]
+    }
+  ]
+}

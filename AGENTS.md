@@ -1,153 +1,180 @@
-# Everything Claude Code (ECC) — Agent Instructions
+# Brainmetrix — Frappe & ERPNext Agent Guide
 
-This is a **production-ready AI coding plugin** providing 25 specialized agents, 108 skills, 57 commands, and automated hook workflows for software development.
+This repository is a fork of [everything-claude-code](https://github.com/affaan-m/everything-claude-code)
+extended with specialist agents, commands, rules, skills, and Cursor hooks
+for Frappe Framework and ERPNext development.
 
-## Core Principles
+Maintained by [Brainmetrix](https://github.com/Brainmetrix).
 
-1. **Agent-First** — Delegate to specialized agents for domain tasks
-2. **Test-Driven** — Write tests before implementation, 80%+ coverage required
-3. **Security-First** — Never compromise on security; validate all inputs
-4. **Immutability** — Always create new objects, never mutate existing ones
-5. **Plan Before Execute** — Plan complex features before writing code
+---
 
-## Available Agents
+## Quick Install
 
-| Agent | Purpose | When to Use |
-|-------|---------|-------------|
-| planner | Implementation planning | Complex features, refactoring |
-| architect | System design and scalability | Architectural decisions |
-| tdd-guide | Test-driven development | New features, bug fixes |
-| code-reviewer | Code quality and maintainability | After writing/modifying code |
-| security-reviewer | Vulnerability detection | Before commits, sensitive code |
-| build-error-resolver | Fix build/type errors | When build fails |
-| e2e-runner | End-to-end Playwright testing | Critical user flows |
-| refactor-cleaner | Dead code cleanup | Code maintenance |
-| doc-updater | Documentation and codemaps | Updating docs |
-| go-reviewer | Go code review | Go projects |
-| go-build-resolver | Go build errors | Go build failures |
-| kotlin-reviewer | Kotlin code review | Kotlin/Android/KMP projects |
-| kotlin-build-resolver | Kotlin/Gradle build errors | Kotlin build failures |
-| database-reviewer | PostgreSQL/Supabase specialist | Schema design, query optimization |
-| python-reviewer | Python code review | Python projects |
-| java-reviewer | Java and Spring Boot code review | Java/Spring Boot projects |
-| java-build-resolver | Java/Maven/Gradle build errors | Java build failures |
-| chief-of-staff | Communication triage and drafts | Multi-channel email, Slack, LINE, Messenger |
-| loop-operator | Autonomous loop execution | Run loops safely, monitor stalls, intervene |
-| harness-optimizer | Harness config tuning | Reliability, cost, throughput |
-| rust-reviewer | Rust code review | Rust projects |
-| rust-build-resolver | Rust build errors | Rust build failures |
+```bash
+git clone https://github.com/Brainmetrix/everything-claude-code.git
+cd everything-claude-code
 
-## Agent Orchestration
+# Claude Code — agents, commands, rules, skill
+mkdir -p ~/.claude/agents ~/.claude/commands ~/.claude/rules ~/.claude/skills/frappe-patterns
+cp agents/frappe/*.md ~/.claude/agents/
+cp commands/frappe/*.md ~/.claude/commands/
+cp -r rules/frappe/* ~/.claude/rules/
+cp skills/frappe-patterns/SKILL.md ~/.claude/skills/frappe-patterns/SKILL.md
 
-Use agents proactively without user prompt:
-- Complex feature requests → **planner**
-- Code just written/modified → **code-reviewer**
-- Bug fix or new feature → **tdd-guide**
-- Architectural decision → **architect**
-- Security-sensitive code → **security-reviewer**
-- Multi-channel communication triage → **chief-of-staff**
-- Autonomous loops / loop monitoring → **loop-operator**
-- Harness config reliability and cost → **harness-optimizer**
+# Copy CLAUDE.md to your Frappe app root
+cp examples/frappe/CLAUDE.md ~/frappe-bench/apps/<your_app>/CLAUDE.md
 
-Use parallel execution for independent operations — launch multiple agents simultaneously.
-
-## Security Guidelines
-
-**Before ANY commit:**
-- No hardcoded secrets (API keys, passwords, tokens)
-- All user inputs validated
-- SQL injection prevention (parameterized queries)
-- XSS prevention (sanitized HTML)
-- CSRF protection enabled
-- Authentication/authorization verified
-- Rate limiting on all endpoints
-- Error messages don't leak sensitive data
-
-**Secret management:** NEVER hardcode secrets. Use environment variables or a secret manager. Validate required secrets at startup. Rotate any exposed secrets immediately.
-
-**If security issue found:** STOP → use security-reviewer agent → fix CRITICAL issues → rotate exposed secrets → review codebase for similar issues.
-
-## Coding Style
-
-**Immutability (CRITICAL):** Always create new objects, never mutate. Return new copies with changes applied.
-
-**File organization:** Many small files over few large ones. 200-400 lines typical, 800 max. Organize by feature/domain, not by type. High cohesion, low coupling.
-
-**Error handling:** Handle errors at every level. Provide user-friendly messages in UI code. Log detailed context server-side. Never silently swallow errors.
-
-**Input validation:** Validate all user input at system boundaries. Use schema-based validation. Fail fast with clear messages. Never trust external data.
-
-**Code quality checklist:**
-- Functions small (<50 lines), files focused (<800 lines)
-- No deep nesting (>4 levels)
-- Proper error handling, no hardcoded values
-- Readable, well-named identifiers
-
-## Testing Requirements
-
-**Minimum coverage: 80%**
-
-Test types (all required):
-1. **Unit tests** — Individual functions, utilities, components
-2. **Integration tests** — API endpoints, database operations
-3. **E2E tests** — Critical user flows
-
-**TDD workflow (mandatory):**
-1. Write test first (RED) — test should FAIL
-2. Write minimal implementation (GREEN) — test should PASS
-3. Refactor (IMPROVE) — verify coverage 80%+
-
-Troubleshoot failures: check test isolation → verify mocks → fix implementation (not tests, unless tests are wrong).
-
-## Development Workflow
-
-1. **Plan** — Use planner agent, identify dependencies and risks, break into phases
-2. **TDD** — Use tdd-guide agent, write tests first, implement, refactor
-3. **Review** — Use code-reviewer agent immediately, address CRITICAL/HIGH issues
-4. **Capture knowledge in the right place**
-   - Personal debugging notes, preferences, and temporary context → auto memory
-   - Team/project knowledge (architecture decisions, API changes, runbooks) → the project's existing docs structure
-   - If the current task already produces the relevant docs or code comments, do not duplicate the same information elsewhere
-   - If there is no obvious project doc location, ask before creating a new top-level file
-5. **Commit** — Conventional commits format, comprehensive PR summaries
-
-## Git Workflow
-
-**Commit format:** `<type>: <description>` — Types: feat, fix, refactor, docs, test, chore, perf, ci
-
-**PR workflow:** Analyze full commit history → draft comprehensive summary → include test plan → push with `-u` flag.
-
-## Architecture Patterns
-
-**API response format:** Consistent envelope with success indicator, data payload, error message, and pagination metadata.
-
-**Repository pattern:** Encapsulate data access behind standard interface (findAll, findById, create, update, delete). Business logic depends on abstract interface, not storage mechanism.
-
-**Skeleton projects:** Search for battle-tested templates, evaluate with parallel agents (security, extensibility, relevance), clone best match, iterate within proven structure.
-
-## Performance
-
-**Context management:** Avoid last 20% of context window for large refactoring and multi-file features. Lower-sensitivity tasks (single edits, docs, simple fixes) tolerate higher utilization.
-
-**Build troubleshooting:** Use build-error-resolver agent → analyze errors → fix incrementally → verify after each fix.
-
-## Project Structure
-
-```
-agents/          — 25 specialized subagents
-skills/          — 102 workflow skills and domain knowledge
-commands/        — 57 slash commands
-hooks/           — Trigger-based automations
-rules/           — Always-follow guidelines (common + per-language)
-scripts/         — Cross-platform Node.js utilities
-mcp-configs/     — 14 MCP server configurations
-tests/           — Test suite
+# Cursor — no install needed, open repo and rules load automatically
 ```
 
-## Success Metrics
+---
 
-- All tests pass with 80%+ coverage
-- No security vulnerabilities
-- Code is readable and maintainable
-- Performance is acceptable
-- User requirements are met
+## Frappe Specialist Agents (12)
+
+Install to `~/.claude/agents/`. Files in `agents/frappe/`.
+
+### Planning & Design — `model: opus`
+
+| Agent | When to invoke |
+|-------|---------------|
+| `frappe-planner` | Before writing any non-trivial feature. Reads codebase, produces a full blueprint with file list, step order, migration plan, and security checklist. Reply "proceed" to start. |
+| `frappe-architect` | System design decisions — sync vs async, ERPNext extension strategy, integration architecture, multi-tenant design. Produces an Architecture Decision Record. |
+
+### Code Quality — `model: sonnet`
+
+| Agent | When to invoke |
+|-------|---------------|
+| `frappe-reviewer` | Before every commit or PR. Three-phase scan: security → performance → conventions. Returns PASS / NEEDS WORK / BLOCKED with file:line references. |
+| `frappe-tdd-guide` | Start of every feature or bug fix. Writes failing test first, confirms RED, guides to GREEN. Never writes implementation before test exists. |
+| `frappe-security-reviewer` | Before every production deployment. OWASP Top 10 in Frappe context. Returns A–F security grade. Do not deploy below B. |
+
+### Specialist Technical — `model: sonnet`
+
+| Agent | When to invoke |
+|-------|---------------|
+| `frappe-perf-agent` | When pages or APIs are slow. Finds N+1, missing indexes, blocking HTTP. Generates EXPLAIN queries and fix code. |
+| `frappe-db-agent` | DB query review, schema design, ORM method selection, migration patches, indexing strategy. |
+| `frappe-api-agent` | Whitelisted endpoint design, security audit, permission debugging. Generates endpoint + JS caller + unit test. |
+| `frappe-bg-agent` | Background job design, RQ queue selection, failing job diagnosis. Generates `frappe.set_user("Administrator")` as first line. |
+| `frappe-migrate-agent` | bench migrate failures, schema conflicts, idempotent patch creation, ERPNext version upgrades. |
+| `frappe-integrator` | Full third-party integration stack: Settings DocType → adapter class → webhook handler → background sync → mocked tests. |
+
+### Documentation — `model: haiku`
+
+| Agent | When to invoke |
+|-------|---------------|
+| `frappe-doc-agent` | After shipping a feature. Updates docstrings, CHANGELOG, README. Fast and focused. |
+
+---
+
+## Daily Workflow
+
+### Starting a new feature
+```
+frappe-planner      → blueprint and file list
+frappe-tdd-guide    → write failing tests first
+(implement)
+frappe-reviewer     → catch issues before commit
+```
+
+### Before deploying
+```
+frappe-reviewer             → code quality gate
+frappe-security-reviewer    → OWASP audit (B or above required)
+frappe-doc-agent            → update CHANGELOG and docs
+```
+
+### When something is slow
+```
+frappe-perf-agent   → diagnose and generate fix
+frappe-db-agent     → query and index review
+```
+
+### Building a third-party integration
+```
+frappe-architect    → design the integration architecture
+frappe-integrator   → generate full integration stack
+frappe-tdd-guide    → write tests with mocked HTTP
+frappe-security-reviewer → verify webhook security
+```
+
+---
+
+## Frappe Commands (24)
+
+Install to `~/.claude/commands/`. Files in `commands/frappe/`.
+
+| Command | Purpose |
+|---------|---------|
+| `/frappe` | Master dispatcher — routes to correct command |
+| `/frappe-new` | Scaffold DocType: json + py + js + test |
+| `/frappe-api` | Create whitelisted API endpoint |
+| `/frappe-hook` | Add doc_events, scheduled tasks, JS overrides |
+| `/frappe-bg` | Create or convert background job |
+| `/frappe-fix` | Debug tracebacks and errors |
+| `/frappe-review` | Deep Frappe-aware code review |
+| `/frappe-patch` | Idempotent data migration patch |
+| `/frappe-test` | Unit and integration tests |
+| `/frappe-integrate` | Full third-party integration scaffold |
+| `/frappe-report` | Query and Script reports |
+| `/frappe-fixture` | Export, import, audit fixtures |
+| `/frappe-perf` | Performance diagnosis |
+| `/frappe-permission` | Roles and field-level permissions |
+| `/frappe-notify` | Emails, desk alerts, WhatsApp/SMS |
+| `/frappe-vue` | Frappe UI Vue 3 components |
+| `/frappe-page` | www/ portal pages (Jinja + Python) |
+| `/frappe-deploy` | Pre-deployment checklist |
+| `/frappe-print` | Print formats and PDF generation |
+| `/frappe-dashboard` | Dashboards and charts |
+| `/frappe-migrate` | Migration failures and schema changes |
+| `/frappe-import` | Bulk data import with progress |
+| `/frappe-workflow` | Approval workflows |
+| `/frappe-script` | Desk client scripts (JS) |
+
+---
+
+## Frappe Rules (Claude Code)
+
+Install to `~/.claude/rules/`. Files in `rules/frappe/`.
+
+```bash
+cp -r rules/frappe/* ~/.claude/rules/
+```
+
+| Rule file | Always active for |
+|-----------|------------------|
+| `frappe-coding-style.md` | ORM hierarchy, lifecycle hooks, JS patterns |
+| `frappe-security.md` | has_permission, SQL injection, credential storage |
+| `frappe-testing.md` | TDD structure, tearDown rollback, mock HTTP |
+| `frappe-performance.md` | N+1, page_length, cached_doc, enqueue |
+
+---
+
+## Cursor Support
+
+The `.cursor/` folder provides full Cursor IDE support.
+Open this repo in Cursor and rules load automatically — no install needed.
+
+| Component | Count | Details |
+|-----------|-------|---------|
+| Rules | 6 | `frappe-coding-style`, `frappe-security`, `frappe-testing`, `frappe-performance`, `frappe-git-workflow`, `frappe-agents` — all with YAML frontmatter |
+| Hook scripts | 4 | `adapter.js` (DRY bridge), `before-shell.js`, `after-file-edit.js`, `before-submit-prompt.js` |
+| Hook events | 5 | `sessionStart`, `beforeShellExecution`, `afterFileEdit`, `beforeSubmitPrompt`, `stop` |
+| Skill | 1 | `frappe-patterns` — auto-triggered on Frappe keywords |
+| MCP config | 1 | `.cursor/mcp.json` — GitHub, Sequential Thinking, Memory |
+
+### What the hooks do
+- `beforeShellExecution` — blocks direct edits to `frappe/erpnext` source, blocks `git push --force`
+- `afterFileEdit` — detects SQL injection, `commit()` in `validate()`, N+1 patterns live on save
+- `beforeSubmitPrompt` — blocks prompts containing Razorpay keys, GitHub tokens, AWS keys
+- `stop` — prints action item checklist (export fixtures, run migrate, run tests)
+
+---
+
+## Frappe Context Files
+
+| File | Where to place | Purpose |
+|------|---------------|---------|
+| `examples/frappe/CLAUDE.md` | `~/frappe-bench/apps/<app>/CLAUDE.md` | Auto-loaded by Claude Code — app structure, CLI commands, conventions |
+| `skills/frappe-patterns/SKILL.md` | `~/.claude/skills/frappe-patterns/SKILL.md` | Auto-triggered on Frappe keywords — 16 pattern areas |
+| `.cursor/rules/*.md` | Already in repo `.cursor/` | Auto-loaded by Cursor — always-on Frappe rules |

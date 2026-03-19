@@ -116,11 +116,8 @@ name: frappe-<specialist>
 description: >
   One paragraph describing when to use this agent.
   Include specific trigger scenarios.
-model: claude-sonnet-4-5
-tools:
-  - Read
-  - Grep
-  - Glob
+model: sonnet
+tools: ["Read", "Grep", "Glob"]
 ---
 ```
 

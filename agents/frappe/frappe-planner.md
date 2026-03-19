@@ -7,11 +7,8 @@ description: >
   prevents architectural mistakes before a line of code is written.
   Invoke for: new DocTypes, new integrations, new API surfaces, refactors,
   multi-step features involving hooks + background jobs + frontend.
-model: claude-opus-4-5
-tools:
-  - Read
-  - Grep
-  - Glob
+model: opus
+tools: ["Read", "Grep", "Glob"]
 ---
 
 You are a senior Frappe/ERPNext architect. Your only job is to produce implementation plans — you never write code, never edit files.

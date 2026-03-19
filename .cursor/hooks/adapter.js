@@ -1,81 +1,157 @@
 #!/usr/bin/env node
 /**
- * Cursor-to-Claude Code Hook Adapter
- * Transforms Cursor stdin JSON to Claude Code hook format,
- * then delegates to existing scripts/hooks/*.js
+ * Cursor hook adapter for Frappe ECC.
+ *
+ * Transforms Cursor's stdin JSON format into the format expected by
+ * scripts/hooks/*.js, then delegates to the appropriate hook script.
+ * This keeps Cursor hooks DRY — no logic duplication between tools.
+ *
+ * Architecture (matches ECC source DRY adapter pattern):
+ *   Cursor stdin JSON → adapter.js → transforms → scripts/hooks/*.js
  */
 
-const { execFileSync } = require('child_process');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
+const { execFileSync } = require("child_process");
 
-const MAX_STDIN = 1024 * 1024;
-
-function readStdin() {
-  return new Promise((resolve) => {
-    let data = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => {
-      if (data.length < MAX_STDIN) data += chunk.substring(0, MAX_STDIN - data.length);
-    });
-    process.stdin.on('end', () => resolve(data));
-  });
-}
-
-function getPluginRoot() {
-  return path.resolve(__dirname, '..', '..');
-}
-
-function transformToClaude(cursorInput, overrides = {}) {
-  return {
-    tool_input: {
-      command: cursorInput.command || cursorInput.args?.command || '',
-      file_path: cursorInput.path || cursorInput.file || cursorInput.args?.filePath || '',
-      ...overrides.tool_input,
-    },
-    tool_output: {
-      output: cursorInput.output || cursorInput.result || '',
-      ...overrides.tool_output,
-    },
-    transcript_path: cursorInput.transcript_path || cursorInput.transcriptPath || cursorInput.session?.transcript_path || '',
-    _cursor: {
-      conversation_id: cursorInput.conversation_id,
-      hook_event_name: cursorInput.hook_event_name,
-      workspace_roots: cursorInput.workspace_roots,
-      model: cursorInput.model,
-    },
-  };
-}
-
-function runExistingHook(scriptName, stdinData) {
-  const scriptPath = path.join(getPluginRoot(), 'scripts', 'hooks', scriptName);
+// Read Cursor's hook payload from stdin
+let rawInput = "";
+process.stdin.resume();
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { rawInput += chunk; });
+process.stdin.on("end", () => {
+  let cursorPayload = {};
   try {
-    execFileSync('node', [scriptPath], {
-      input: typeof stdinData === 'string' ? stdinData : JSON.stringify(stdinData),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 15000,
-      cwd: process.cwd(),
-    });
-  } catch (e) {
-    if (e.status === 2) process.exit(2); // Forward blocking exit code
+    cursorPayload = JSON.parse(rawInput);
+  } catch {
+    process.exit(0);
+  }
+
+  const event = process.argv[2] || "unknown";
+  const repoRoot = process.cwd();
+  const scriptsDir = path.join(repoRoot, "scripts", "hooks");
+
+  // Map Cursor events to ECC script hooks
+  const eventToScript = {
+    beforeShellExecution: "before-shell.js",
+    afterFileEdit:        "after-file-edit.js",
+    stop:                 "session-stop.js",
+    sessionStart:         "session-start.js",
+    beforeSubmitPrompt:   "before-submit-prompt.js",
+  };
+
+  const scriptName = eventToScript[event];
+
+  // Transform Cursor payload to ECC format
+  const eccPayload = transformPayload(event, cursorPayload);
+
+  if (scriptName) {
+    const scriptPath = path.join(scriptsDir, scriptName);
+    if (fs.existsSync(scriptPath)) {
+      // Delegate to shared ECC script
+      try {
+        const result = execFileSync("node", [scriptPath], {
+          input: JSON.stringify(eccPayload),
+          encoding: "utf8",
+          env: { ...process.env, CURSOR_HOOK_EVENT: event },
+        });
+        process.stdout.write(result);
+      } catch (err) {
+        // Script returned non-zero — pass through stderr
+        process.stderr.write(err.stderr || "");
+        process.exit(err.status || 1);
+      }
+      return;
+    }
+  }
+
+  // No matching script — run Frappe-specific inline checks
+  runFrappeInlineChecks(event, cursorPayload);
+});
+
+/**
+ * Transform Cursor's payload format to ECC's expected format.
+ */
+function transformPayload(event, cursor) {
+  switch (event) {
+    case "beforeShellExecution":
+      return { command: cursor.command || "" };
+
+    case "afterFileEdit":
+      return {
+        file_path: cursor.filePath || cursor.file_path || "",
+        edits: cursor.edits || [],
+      };
+
+    case "stop":
+    case "sessionEnd":
+      return {
+        session_id: cursor.sessionId || cursor.session_id || `cursor_${Date.now()}`,
+        transcript: cursor.transcript || [],
+      };
+
+    case "sessionStart":
+      return {
+        session_id: cursor.sessionId || `cursor_${Date.now()}`,
+        cwd: cursor.cwd || process.cwd(),
+      };
+
+    case "beforeSubmitPrompt":
+      return {
+        prompt: cursor.prompt || cursor.message || "",
+      };
+
+    default:
+      return cursor;
   }
 }
 
-function hookEnabled(hookId, allowedProfiles = ['standard', 'strict']) {
-  const rawProfile = String(process.env.ECC_HOOK_PROFILE || 'standard').toLowerCase();
-  const profile = ['minimal', 'standard', 'strict'].includes(rawProfile) ? rawProfile : 'standard';
+/**
+ * Frappe-specific inline checks run when no shared script exists.
+ */
+function runFrappeInlineChecks(event, payload) {
+  if (event === "beforeShellExecution") {
+    const cmd = payload.command || "";
 
-  const disabled = new Set(
-    String(process.env.ECC_DISABLED_HOOKS || '')
-      .split(',')
-      .map(v => v.trim().toLowerCase())
-      .filter(Boolean)
-  );
+    // Block direct edits to frappe/erpnext source
+    if (/\b(vi|vim|nano|sed|echo)\b.*\/(frappe|erpnext)\/(?!\.git)/.test(cmd)) {
+      console.log(JSON.stringify({
+        permission: "deny",
+        agentMessage: "[Frappe] Blocked: editing frappe/erpnext source directly. Use hooks.py doc_events and Custom Fields instead.",
+      }));
+      return;
+    }
 
-  if (disabled.has(String(hookId || '').toLowerCase())) {
-    return false;
+    // Block force push
+    if (/git\s+push\s+.*--force(?!-with-lease)/.test(cmd)) {
+      console.log(JSON.stringify({
+        permission: "deny",
+        agentMessage: "[Frappe] Blocked: git push --force. Use --force-with-lease instead.",
+      }));
+      return;
+    }
   }
 
-  return allowedProfiles.includes(profile);
-}
+  if (event === "beforeSubmitPrompt") {
+    const prompt = payload.prompt || "";
+    // Detect secrets in prompts
+    const secretPatterns = [
+      { re: /ghp_[a-zA-Z0-9]{36}/, label: "GitHub token" },
+      { re: /sk-[a-zA-Z0-9]{32,}/, label: "API key" },
+      { re: /rzp_(live|test)_[a-zA-Z0-9]{14}/, label: "Razorpay key" },
+      { re: /AKIA[0-9A-Z]{16}/, label: "AWS access key" },
+    ];
+    const found = secretPatterns.filter(p => p.re.test(prompt));
+    if (found.length > 0) {
+      const labels = found.map(f => f.label).join(", ");
+      console.log(JSON.stringify({
+        permission: "deny",
+        agentMessage: `[Frappe] Blocked: prompt contains potential secrets (${labels}). Remove before sending.`,
+      }));
+      return;
+    }
+  }
 
-module.exports = { readStdin, getPluginRoot, transformToClaude, runExistingHook, hookEnabled };
+  // Default: allow
+  console.log(JSON.stringify({ permission: "allow" }));
+}
